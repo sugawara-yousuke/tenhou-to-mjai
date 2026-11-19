@@ -1,0 +1,20 @@
+# 牌譜データ（天鳳の牌譜は再配布しない）
+data/
+*.zip
+*.tar
+*.zst
+
+# 生成物
+replays/
+*.mjson
+*aux_cache*
+__pycache__/
+*.pyc
+*.log
+nohup.out
+
+# 学習中のチェックポイント（配布用の重みは weights/ にだけ置く）
+*.pt
+!weights/*.pt
+train/checkpoints*/
+checkpoints*/

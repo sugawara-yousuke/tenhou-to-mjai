@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>🀄 麻雀牌譜ビューアー</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{width:100%;height:100%;overflow:hidden}
+body{background:#0b1018;color:#e8e0d0;font-family:'Noto Sans JP',sans-serif}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#0b1018}
+::-webkit-scrollbar-thumb{background:#2a3a50;border-radius:3px}
+button:hover:not(:disabled){filter:brightness(1.2)}
+button:active:not(:disabled){transform:scale(0.97)}
+.tile{
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:4px;font-weight:800;font-family:'Noto Serif JP',serif;
+  background:linear-gradient(160deg,#fffdf0,#ede8d5);
+  box-shadow:0 3px 6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.9);
+  flex-shrink:0;user-select:none;line-height:1;
+  border:2px solid #c8b89a;
+}
+.tile.back{background:linear-gradient(160deg,#243550,#172438);border-color:#2a4060}
+.tile.hl{border-color:#f39c12!important;box-shadow:0 0 14px #f39c12,0 3px 6px rgba(0,0,0,.5)!important}
+.tile.last{border-color:#e74c3c!important;box-shadow:0 0 12px #e74c3c88,0 3px 6px rgba(0,0,0,.5)!important}
+.tile.model{border-color:#4a90d9!important;box-shadow:0 0 12px #4a90d988,0 3px 6px rgba(0,0,0,.5)!important}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useCallback,useEffect,useRef,useMemo}=React;
+const API="";
+
+// ─── 牌ヘルパー ───
+const Z_MAP={"1z":"東","2z":"南","3z":"西","4z":"北","5z":"白","6z":"発","7z":"中"};
+const ALIAS={"E":"東","S":"南","W":"西","N":"北","P":"白","F":"発","C":"中"};
+const SC={"m":"#c0392b","p":"#1e8449","s":"#1a5276","z":"#6c3483"};
+const WIND_LABEL=["東","南","西","北"];
+
+function tileDisp(p){
+  if(!p||p==="?")return{l:"?",c:"#999"};
+  // 入力ゆらぎを正規化: 前後空白除去・エイリアス・大文字小文字・"z7"↔"7z"順序
+  let t=String(p).trim();
+  if(ALIAS[t])return{l:ALIAS[t],c:SC.z};            // E/S/W/N/P/F/C
+  if(ALIAS[t.toUpperCase()])return{l:ALIAS[t.toUpperCase()],c:SC.z};
+  // 正規形へ: 数字1桁＋スート1文字(mpsz) に整える。順序反転や大文字も許容。
+  let m=t.match(/^([0-9])\s*([mpszMPSZ])$/) || null;   // "7z" 形式
+  if(!m){ const m2=t.match(/^([mpszMPSZ])\s*([0-9])$/); if(m2) m=[t,m2[2],m2[1]]; } // "z7" 形式
+  if(m){
+    const num=m[1]; const suit=m[2].toLowerCase();
+    const norm=`${num}${suit}`;
+    if(suit==="z"){
+      if(Z_MAP[norm])return{l:Z_MAP[norm],c:SC.z};
+      return{l:"?",c:"#999"};
+    }
+    const disp=num==="0"?"赤":num;
+    const sl={m:"萬",p:"筒",s:"索"}[suit]||"";
+    return{l:`${disp}${sl}`,c:SC[suit]||"#444"};
+  }
+  // 旧マップも一応参照（完全一致）
+  if(Z_MAP[t])return{l:Z_MAP[t],c:SC.z};
+  return{l:t,c:"#444"};
+}
+
+// ─── 牌コンポーネント ───
+function Tile({pai,W=42,H=60,FS=14,back=false,hl=false,last=false,modelPick=false}){
+  const{l,c}=back?{l:"",c:"#7a9ab0"}:tileDisp(pai);
+  const cls=["tile",back?"back":"",hl?"hl":"",last?"last":"",modelPick?"model":""].filter(Boolean).join(" ");
+  const borderColor=hl?"#f39c12":last?"#e74c3c":modelPick?"#4a90d9":"#c8b89a";
+  return(
+    <div className={cls} style={{width:W,height:H,fontSize:FS,color:back?"#6a8aaa":c,borderColor}}>
+      {back?"":l}
+    </div>
+  );
+}
+
+// ─── 捨て牌 ───
+function Discards({list,lastIdx,rotate=0}){
+  return(
+    <div style={{
+      display:"flex",flexWrap:"wrap",gap:3,
+      width:rotate===0||rotate===180?270:270,
+      transform:`rotate(${rotate}deg)`,transformOrigin:"center",
+    }}>
+      {list.map((d,i)=>(
+        <div key={i} style={{position:"relative"}}>
+          <Tile pai={d.pai} W={28} H={38} FS={10} last={i===lastIdx}/>
+          {d.riichi&&<div style={{
+            position:"absolute",top:-2,right:-2,width:7,height:7,
+            borderRadius:"50%",background:"#e74c3c",boxShadow:"0 0 4px #e74c3c",
+          }}/>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── 縦向き手牌（左右プレイヤー用） ───
+function HandCol({tiles,tsumo,W=30,H=42,FS=11,hidden=false}){
+  const sorted=[...tiles].sort((a,b)=>{
+    const o=t=>{const s=["m","p","s","z"].includes(t?.slice(-1))?t.slice(-1):"z";return{m:0,p:1,s:2,z:3}[s]*100+(t[0]==="0"?5:parseInt(t[0])||8);};
+    return o(a)-o(b);
+  });
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:3,alignItems:"center"}}>
+      {sorted.map((t,i)=><Tile key={i} pai={t} W={W} H={H} FS={FS} back={hidden}/>)}
+      {tsumo&&<><div style={{height:8}}/><Tile pai={tsumo} W={W} H={H} FS={FS} hl={!hidden} back={hidden}/></>}
+    </div>
+  );
+}
+
+// ─── 牌IDマップ ───
+const TILE_ID_MAP={"1m":0,"2m":1,"3m":2,"4m":3,"5m":4,"0m":4,"6m":5,"7m":6,"8m":7,"9m":8,
+  "1p":9,"2p":10,"3p":11,"4p":12,"5p":13,"0p":13,"6p":14,"7p":15,"8p":16,"9p":17,
+  "1s":18,"2s":19,"3s":20,"4s":21,"5s":22,"0s":22,"6s":23,"7s":24,"8s":25,"9s":26,
+  "1z":27,"2z":28,"3z":29,"4z":30,"5z":31,"6z":32,"7z":33,
+  "E":27,"S":28,"W":29,"N":30,"P":31,"F":32,"C":33};
+function tid(t){return TILE_ID_MAP[t]??-1;}
+
+// ─── 役判定 ───
+function detectYaku(melds,riichi,tehais,pi,oya){
+  const hand=tehais[pi]||[];
+  const meld=melds[pi]||[];
+  const hasMeld=meld.length>0;
+  const isRiichi=riichi[pi];
+  const yakus=[];
+
+  // リーチ
+  if(isRiichi) yakus.push({name:"リーチ",han:1});
+
+  // 門前清自摸（副露なし＆リーチあり）
+  // ※UIではツモ判定できないので副露なし表示のみ
+  if(!hasMeld&&!isRiichi) yakus.push({name:"門前",han:0,note:true});
+
+  // タンヤオ（全牌が2〜8）
+  const allTiles=[...hand,...meld.flatMap(m=>[...(m.consumed||[]),m.pai].filter(Boolean))];
+  if(allTiles.length>0&&allTiles.every(t=>{
+    const id=tid(t); return id>=0&&id<27&&id%9>=1&&id%9<=7;
+  })) yakus.push({name:"タンヤオ",han:1});
+
+  // 役牌（白・発・中）
+  const honorNames={31:"白",32:"発",33:"中"};
+  meld.filter(m=>m.type==="pon"||m.type==="daiminkan").forEach(m=>{
+    const id=tid(m.pai||"");
+    if(id>=31&&id<=33) yakus.push({name:`役牌(${honorNames[id]})`,han:1});
+  });
+
+  // 風牌（場風・自風）
+  const windNames={27:"東",28:"南",29:"西",30:"北"};
+  // ※場風・自風はkyokuのbakaze/oyaが必要なので簡略化
+  meld.filter(m=>m.type==="pon"||m.type==="daiminkan").forEach(m=>{
+    const id=tid(m.pai||"");
+    if(id>=27&&id<=30) yakus.push({name:`風牌(${windNames[id]})`,han:1,note:true});
+  });
+
+  // チャンタ（全面子に端牌/字牌）簡易
+  // 副露
+  if(meld.some(m=>m.type==="chi")) yakus.push({name:"チー",han:0,note:true});
+  if(meld.some(m=>m.type==="pon")) yakus.push({name:"ポン",han:0,note:true});
+  if(meld.some(m=>m.type==="ankan"||m.type==="kakan"||m.type==="daiminkan"))
+    yakus.push({name:"槓",han:0,note:true});
+
+  return yakus;
+}
+
+// ─── 副露牌表示 ───
+function MeldTiles({meldList, size="sm"}){
+  const TW=size==="sm"?28:32, TH=size==="sm"?38:44, TF=size==="sm"?9:11;
+  if(!meldList||meldList.length===0) return null;
+  return(
+    <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"flex-end"}}>
+      {meldList.map((m,mi)=>(
+        <div key={mi} style={{
+          display:"flex",gap:1,alignItems:"flex-end",
+          background:"rgba(0,0,0,.3)",borderRadius:3,padding:"2px 3px",
+          border:"1px solid #2a3a20",
+        }}>
+          {m.type==="ankan"
+            ? (m.consumed||["?","?","?","?"]).map((c,ci)=>(
+                <Tile key={ci} pai={ci===0||ci===3?"?":c} W={TW} H={TH} FS={TF} back={ci===0||ci===3}/>
+              ))
+            : (m.consumed||[]).map((c,ci)=>(
+                <Tile key={ci} pai={c} W={TW} H={TH} FS={TF}/>
+              ))
+          }
+          {m.pai&&m.type!=="ankan"&&(
+            <Tile pai={m.pai} W={TW} H={TH} FS={TF} hl/>
+          )}
+          <span style={{fontSize:8,color:"#888",alignSelf:"flex-end",marginLeft:1}}>
+            {m.type==="chi"?"チー":m.type==="pon"?"ポン":m.type==="ankan"?"暗槓":"槓"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── リーチ棒 ───
+function RiichiBou(){
+  return(
+    <div style={{
+      display:"flex",alignItems:"center",gap:3,
+      background:"rgba(231,76,60,.15)",border:"1px solid #e74c3c55",
+      borderRadius:4,padding:"2px 8px",
+    }}>
+      <div style={{width:32,height:5,background:"linear-gradient(90deg,#e74c3c,#c0392b)",
+                   borderRadius:3,boxShadow:"0 0 6px #e74c3c88"}}/>
+      <span style={{fontSize:9,color:"#e74c3c",fontWeight:800}}>リーチ</span>
+    </div>
+  );
+}
+
+// ─── 横向き手牌（上下プレイヤー用） ───
+function HandRow({tiles,tsumo,lastPai,rotate=0,clickable=false,onTileClick,playableSet,hidden=false}){
+  const sorted=[...tiles].sort((a,b)=>{
+    const o=t=>{const s=["m","p","s","z"].includes(t?.slice(-1))?t.slice(-1):"z";return{m:0,p:1,s:2,z:3}[s]*100+(t[0]==="0"?5:parseInt(t[0])||8);};
+    return o(a)-o(b);
+  });
+  // クリック可能な牌をラップして、ホバーで浮き上がる見た目にする
+  const norm5=(p)=>({"0m":"5m","0p":"5p","0s":"5s"}[p]||p);
+  const wrap=(t,el,key)=>{
+    const canClick = clickable && !hidden && (!playableSet || playableSet.has(norm5(t)));
+    if(!canClick) return <React.Fragment key={key}>{el}</React.Fragment>;
+    return(
+      <div key={key}
+        onClick={()=>onTileClick&&onTileClick(t)}
+        style={{cursor:"pointer",transition:"transform .08s"}}
+        onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-10px)";}}
+        onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";}}>
+        {el}
+      </div>
+    );
+  };
+  return(
+    <div style={{display:"flex",gap:3,alignItems:"flex-end",transform:`rotate(${rotate}deg)`,transformOrigin:"center"}}>
+      {sorted.map((t,i)=>wrap(t,<Tile pai={t} W={38} H={54} FS={13} last={t===lastPai} back={hidden}/>,i))}
+      {tsumo&&<><div style={{width:8}}/>{wrap(tsumo,<Tile pai={tsumo} W={38} H={54} FS={13} hl={!hidden} back={hidden}/>,"tsumo")}</>}
+    </div>
+  );
+}
+
+// ─── 状態取得（server.pyのstateをそのまま使う） ───
+function replayState(kyoku, stepIdx){
+  // server.py が各イベントに state を付加しているのでそれを使う
+  // stepIdx のイベントの state が現在の局面
+  const ev = kyoku.events[Math.min(stepIdx, kyoku.events.length-1)];
+  const st = ev?.state;
+
+  if(!st) {
+    // fallback: haipai のみ
+    return {
+      tehais: kyoku.haipai.map(h=>[...h]),
+      tsumo_pai: [null,null,null,null],
+      melds: [[],[],[],[]],
+      riichi: [false,false,false,false],
+      discards: [[],[],[],[]],
+      doraList: kyoku.dora_markers ? [...kyoku.dora_markers.slice(0,1)] : [],
+      yama_rest: 70,
+      lastAction: null,
+    };
+  }
+
+  // lastAction: 現在のイベントから判定
+  const{type:etype, actor, raw={}} = ev;
+  const pai = raw?.pai;
+  let lastAction = null;
+  if(etype==="tsumo")      lastAction={type:"tsumo", actor, pai};
+  else if(etype==="dahai") lastAction={type:"dahai", actor, pai, tsumogiri:raw.tsumogiri};
+  else if(etype==="chi")   lastAction={type:"chi",   actor, pai};
+  else if(etype==="pon")   lastAction={type:"pon",   actor, pai};
+  else if(etype==="reach") lastAction={type:"reach", actor};
+  else if(etype==="hora")  lastAction={type:"hora",  actor, target:raw.target, pai, score:raw.score};
+  else if(etype==="ryukyoku") lastAction={type:"ryukyoku"};
+  else if(etype==="ankan") lastAction={type:"ankan", actor};
+  else if(etype==="kakan") lastAction={type:"kakan", actor, pai};
+  else if(etype==="daiminkan") lastAction={type:"daiminkan", actor, pai};
+
+  return {
+    tehais:    st.hands,        // 13枚（ツモ牌除く）
+    tsumo_pai: st.tsumo_pai,    // ツモ牌（右に別表示）
+    melds:     st.melds,
+    riichi:    st.riichi,
+    discards:  st.discards,
+    doraList:  st.dora_list,
+    yama_rest: st.yama_rest,
+    honba:     st.honba||0,
+    kyotaku:   st.kyotaku||0,
+    lastAction,
+  };
+}
+
+// ─── 麻雀卓メイン ───
+function MahjongTable({kyoku,step,names,selfPlay,humanSeat,pending,onPick,submitting,humanSid,hideOpponents,canAct}){
+  const st=useMemo(()=>replayState(kyoku,step),[kyoku,step]);
+  const{tehais,discards,melds,riichi,doraList,yama_rest,lastAction,honba,kyotaku}=st;
+  const tsumoTile=st.tsumo_pai;
+  const oya=kyoku.oya;
+  const lastDahai=lastAction?.type==="dahai"?lastAction.pai:null;
+  // 推論パネル：tsumoステップのinfer（次の打牌予測）を優先
+  // dahaiステップではtsumoに付けたinferを参照
+  const curEv2=kyoku.events[step];
+  const infer=curEv2?.infer;
+  // [FIX-D] 鳴き判断（MeldDecisionModel）の推論結果。各イベント直前に
+  // 溜まっていた meld_decision を server が ev_out.meld_infer に格納する。
+  const meldInfer=curEv2?.meld_infer;
+
+  // ── 対人対局: 手牌クリックで打牌する仕組み ──
+  //   人間(P0=humanSeat)の打牌手番のとき、手牌の牌をクリックしたら
+  //   対応する打牌トークンを送信する。候補(pending.options)は赤5を通常5に
+  //   畳んでいるので、正規化した牌文字列(0m→5m 等)で突き合わせる。
+  // 自分がリーチ済みなら打牌選択は不可（リーチ後はツモ切り自動＝サーバー側が選ぶ）。
+  const isHumanDiscardTurn = !!(canAct && humanSid && pending && pending.kind==="dahai"
+                                && pending.player===humanSeat && !riichi[humanSeat]);
+  const norm5=(p)=>({"0m":"5m","0p":"5p","0s":"5s"}[p]||p);
+  // 正規化牌 → 打牌トークン（リーチではなく通常打牌を優先）
+  const dahaiTokenByTile = useMemo(()=>{
+    const m={};
+    if(isHumanDiscardTurn){
+      for(const o of (pending.options||[])){
+        if(o.action==="dahai" && o.pai){
+          const k=norm5(o.pai);
+          if(!(k in m)) m[k]=o.token; // 最初の通常打牌トークンを採用
+        }
+      }
+    }
+    return m;
+  },[isHumanDiscardTurn,pending]);
+  // 手牌牌クリック時: 対応トークンがあれば送信
+  const onHandTileClick=useCallback((pai)=>{
+    if(!isHumanDiscardTurn||submitting) return;
+    const tok=dahaiTokenByTile[norm5(pai)];
+    if(tok!=null) onPick(tok);
+  },[isHumanDiscardTurn,submitting,dahaiTokenByTile,onPick]);
+
+  // 手牌を隠す判定: hideOpponents が ON のとき、人間席(humanSeat)以外を裏向きに。
+  //   観戦モード(humanSeat=null)では全席が対象＝全員裏向き。
+  const isHidden=(pi)=> !!hideOpponents && pi!==humanSeat;
+
+  // 各手牌エリアのrefで実際の位置を取得し、捨て牌位置を決める
+  const refP0=useRef(null), refP1=useRef(null), refP2=useRef(null), refP3=useRef(null);
+  const refBoard=useRef(null);
+  const refTable=useRef(null);
+
+  // 捨て牌エリアの座標を手牌・中央ボードの実測から算出
+  const [discardPos, setDiscardPos] = useState({
+    p0:{left:0,top:0,w:0,h:0},
+    p1:{left:0,top:0,w:0,h:0},
+    p2:{left:0,top:0,w:0,h:0},
+    p3:{left:0,top:0,w:0,h:0},
+  });
+
+  useEffect(()=>{
+    const calc=()=>{
+      const tbl=refTable.current; const brd=refBoard.current;
+      if(!tbl||!brd) return;
+      const TR=tbl.getBoundingClientRect();
+      const BR=brd.getBoundingClientRect();
+      // 中央ボードの卓内座標
+      const bL=BR.left-TR.left, bT=BR.top-TR.top;
+      const bR=bL+BR.width,     bB=bT+BR.height;
+
+      const pos={};
+      // P0（下）: 手牌エリアの上端 〜 中央ボードの下端の間
+      if(refP0.current){
+        const R=refP0.current.getBoundingClientRect();
+        const hTop=R.top-TR.top; // 手牌上端
+        pos.p0={left:bL, top:bB+4, w:BR.width, h:hTop-bB-8};
+      }
+      // P2（上）: 中央ボードの上端 〜 手牌下端の間
+      if(refP2.current){
+        const R=refP2.current.getBoundingClientRect();
+        const hBot=R.bottom-TR.top;
+        pos.p2={left:bL, top:hBot+4, w:BR.width, h:bT-hBot-8};
+      }
+      // P1（右）: 中央ボードの右端 〜 手牌左端の間
+      if(refP1.current){
+        const R=refP1.current.getBoundingClientRect();
+        const hLeft=R.left-TR.left;
+        pos.p1={left:bR+4, top:bT, w:hLeft-bR-8, h:BR.height};
+      }
+      // P3（左）: 手牌右端 〜 中央ボードの左端の間
+      if(refP3.current){
+        const R=refP3.current.getBoundingClientRect();
+        const hRight=R.right-TR.left;
+        pos.p3={left:hRight+4, top:bT, w:bL-hRight-8, h:BR.height};
+      }
+      setDiscardPos(p=>({...p,...pos}));
+    };
+    // 初回 + リサイズ時
+    calc();
+    const ob=new ResizeObserver(calc);
+    if(refTable.current) ob.observe(refTable.current);
+    return()=>ob.disconnect();
+  },[step, kyoku]);
+
+  const li=(pi)=>lastAction?.type==="dahai"&&lastAction.actor===pi?discards[pi].length-1:-1;
+
+  // ─────────────────────────────────────────────────────────────────
+  // 河（捨て牌）: 実際の麻雀と同じ「横6枚 × 段組み」で固定配置する。
+  //   - 牌は左上(自分から見た手前左)から順に、6枚ごとに次の段へ。
+  //   - リーチ宣言牌は横向き(90°回転)に置く（実卓と同じ）。
+  //   - 既存牌の位置は増えても動かない＝スライドしない。
+  //   4人分を「下(P0)基準の升目」で組み、卓の各辺へ rotate で貼り付ける。
+  // ─────────────────────────────────────────────────────────────────
+  const RIVER_COLS=6;      // 1段6枚
+  const DTW=28, DTH=37;    // 河牌サイズ（縦向き基準）— 見やすく拡大
+  const DGAP=1;            // 牌間
+
+  // 1プレイヤー分の河を「下向き（自分の河）」として描くコンポーネント。
+  // riichiIdx: この河の何番目がリーチ宣言牌か（-1=なし）
+  const RiverGrid=({list,lastIdx,riichiIdx})=>{
+    // 各牌の升目内オフセットを積み上げで計算する。
+    // 横向き牌は幅(DTH)を食うので、次牌の x 位置がずれる（実卓再現）。
+    const cellW=DTH; // 1マスの基準幅（横向き牌も収まる最大幅）
+    const rows=[];
+    let col=0, row=0;
+    const placed=list.map((d,i)=>{
+      const sideways = (i===riichiIdx);
+      const p={row,col,sideways,d,idx:i};
+      col++;
+      if(col>=RIVER_COLS){col=0;row++;}
+      return p;
+    });
+    // グリッド全体サイズ
+    const gridW=RIVER_COLS*(cellW+DGAP);
+    const gridH=(row+1)*(DTH+DGAP);
+    return(
+      <div style={{position:"relative",width:gridW,height:gridH}}>
+        {placed.map(p=>{
+          const x=p.col*(cellW+DGAP);
+          const y=p.row*(DTH+DGAP);
+          return(
+            <div key={p.idx} style={{
+              position:"absolute", left:x, top:y,
+              width:cellW, height:DTH,
+              display:"flex", alignItems:"center",
+              justifyContent:"flex-start",
+            }}>
+              <div style={{transform:p.sideways?"rotate(-90deg)":"none",
+                           transformOrigin:"center"}}>
+                <Tile pai={p.d.pai} W={DTW} H={DTH} FS={12}
+                      last={p.idx===lastIdx}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // riichi宣言牌のindexを求める（discards配列内で最初に riichi:true が付いた牌）
+  const riichiIdxOf=(list)=>{
+    for(let i=0;i<list.length;i++) if(list[i].riichi) return i;
+    return -1;
+  };
+
+  // 卓の各辺に河を配置。P0=下(0°) P1=右(-90°) P2=上(180°) P3=左(90°)
+  const RiverAt=({list,lastIdx,pos,rotate})=>{
+    if(!pos) return null;
+    return(
+      <div style={{
+        position:"absolute", left:pos.left, top:pos.top,
+        width:pos.w, height:pos.h,
+        display:"flex",
+        alignItems:"center", justifyContent:"center",
+        zIndex:2, overflow:"visible",
+      }}>
+        <div style={{transform:`rotate(${rotate}deg)`,transformOrigin:"center"}}>
+          <RiverGrid list={list} lastIdx={lastIdx} riichiIdx={riichiIdxOf(list)}/>
+        </div>
+      </div>
+    );
+  };
+
+  const PLabel=({pi,vertical=false})=>{
+    const yakus=detectYaku(melds,riichi,tehais,pi,oya);
+    // 手牌を隠している席は役も伏せる（手牌情報の漏洩防止）。リーチは公開情報なので表示可。
+    const dispYakus=isHidden(pi)?[]:yakus.filter(y=>!y.note&&y.han>0); // 有効役のみ
+    return(
+      <div style={{display:"flex",flexDirection:vertical?"column":"row",alignItems:"center",gap:3}}>
+        <span style={{fontSize:13,fontWeight:700,color:oya===pi?"#f39c12":"#aaa",writingMode:vertical?"vertical-rl":"horizontal-tb"}}>
+          {oya===pi?"👑":""}{names[pi]||`P${pi}`}
+        </span>
+        <span style={{fontSize:16,fontWeight:800,color:oya===pi?"#f0b060":"#9ec8e0",
+                      writingMode:vertical?"vertical-rl":"horizontal-tb",letterSpacing:1}}>
+          {WIND_LABEL[(pi-oya+4)%4]}家
+        </span>
+        {riichi[pi]&&<span style={{fontSize:11,color:"#e74c3c",fontWeight:800,writingMode:vertical?"vertical-rl":"horizontal-tb"}}>🔴リーチ</span>}
+        <span style={{fontSize:11,color:"#555",writingMode:vertical?"vertical-rl":"horizontal-tb"}}>
+          {(kyoku.start_scores[pi]||25000).toLocaleString()}
+        </span>
+        {dispYakus.length>0&&(
+          <div style={{
+            display:"flex",flexDirection:vertical?"column":"row",
+            gap:2,flexWrap:"wrap",
+          }}>
+            {dispYakus.map((y,i)=>(
+              <span key={i} style={{
+                fontSize:9,fontWeight:700,padding:"1px 4px",borderRadius:3,
+                background:"rgba(46,204,113,.2)",border:"1px solid #2ecc7155",
+                color:"#2ecc71",writingMode:vertical?"vertical-rl":"horizontal-tb",
+              }}>{y.name}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(
+    <div ref={refTable} style={{width:"100%",height:"100%",position:"relative",
+                 background:"radial-gradient(ellipse at 50% 50%,#183828 0%,#0c1a10 60%,#081210 100%)",
+                 display:"flex",alignItems:"center",justifyContent:"center"}}>
+
+      {/* 河（捨て牌）: 実卓と同じ6枚区切りの固定配置。P0下/P1右/P2上/P3左 */}
+      <RiverAt list={discards[0]} lastIdx={li(0)} pos={discardPos.p0} rotate={0}/>
+      <RiverAt list={discards[1]} lastIdx={li(1)} pos={discardPos.p1} rotate={-90}/>
+      <RiverAt list={discards[2]} lastIdx={li(2)} pos={discardPos.p2} rotate={180}/>
+      <RiverAt list={discards[3]} lastIdx={li(3)} pos={discardPos.p3} rotate={90}/>
+
+      {/* ── 局終了 精算オーバーレイ（和了/流局） ── */}
+      {(curEv2?.type==="hora"||curEv2?.type==="ryukyoku")&&curEv2?.raw?.scores&&(()=>{
+        const endScores=curEv2.raw.scores;
+        const startScores=kyoku.start_scores||[25000,25000,25000,25000];
+        const isHora=curEv2.type==="hora";
+        return(
+          <div style={{
+            position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
+            background:"rgba(6,12,20,.97)",border:`2px solid ${isHora?"#2ecc71":"#e6a640"}`,
+            borderRadius:14,padding:"18px 26px",zIndex:40,minWidth:340,
+            boxShadow:"0 8px 40px rgba(0,0,0,.8)",
+          }}>
+            <div style={{textAlign:"center",fontSize:18,fontWeight:800,marginBottom:4,
+                         color:isHora?"#7fe0a8":"#f0b060",letterSpacing:2}}>
+              {isHora?"🎉 和了":"💨 流局"}
+            </div>
+            {isHora&&(
+              <div style={{textAlign:"center",fontSize:12,color:"#aaa",marginBottom:12}}>
+                {names[curEv2.actor]||`P${curEv2.actor}`}
+                {curEv2.raw.target!=null?` ← ロン P${curEv2.raw.target}（${names[curEv2.raw.target]||""}）`:"（ツモ）"}
+              </div>
+            )}
+            {!isHora&&<div style={{height:8}}/>}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {[0,1,2,3].map(pi=>{
+                const d=endScores[pi]-startScores[pi];
+                const winner=isHora&&pi===curEv2.actor;
+                return(
+                  <div key={pi} style={{
+                    display:"flex",alignItems:"center",justifyContent:"space-between",
+                    gap:14,padding:"6px 12px",borderRadius:8,
+                    background:winner?"rgba(46,204,113,.15)":"rgba(255,255,255,.03)",
+                    border:`1px solid ${winner?"#2ecc71":"#233"}`,
+                  }}>
+                    <span style={{fontSize:14,fontWeight:700,color:winner?"#7fe0a8":"#ccc",minWidth:90}}>
+                      {WIND_LABEL[(pi-oya+4)%4]}家 {names[pi]||`P${pi}`}
+                    </span>
+                    <span style={{fontSize:15,fontWeight:800,minWidth:70,textAlign:"right",
+                                  color:d>0?"#2ecc71":d<0?"#e74c3c":"#888"}}>
+                      {d>0?"+":""}{d.toLocaleString()}
+                    </span>
+                    <span style={{fontSize:14,color:"#9ec8e0",minWidth:70,textAlign:"right"}}>
+                      {endScores[pi].toLocaleString()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{textAlign:"center",fontSize:10,color:"#556",marginTop:10}}>
+              増減 / 局後の持ち点
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ─ 卓（相対レイアウトの基準） ─ */}
+      <div style={{position:"relative",width:900,height:680}}>
+
+        {/* ── 中央情報ボード ── */}
+        <div ref={refBoard} style={{
+          position:"absolute",left:"50%",top:"50%",
+          transform:"translate(-50%,-50%)",
+          width:200,height:180,
+          background:"rgba(5,15,8,.93)",border:"1px solid #1a3a28",
+          borderRadius:10,backdropFilter:"blur(6px)",zIndex:4,
+          display:"flex",flexDirection:"column",
+          alignItems:"center",justifyContent:"center",gap:5,
+        }}>
+          <div style={{fontSize:14,fontWeight:800,color:"#c39bd3",letterSpacing:1}}>{kyoku.title}</div>
+          {/* 本場・供託を分かりやすく表示 */}
+          <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+            <span style={{
+              display:"inline-flex",alignItems:"center",gap:3,
+              padding:"2px 8px",borderRadius:10,fontSize:11,fontWeight:700,
+              background:(honba>0)?"rgba(230,150,60,.22)":"rgba(255,255,255,.05)",
+              border:`1px solid ${(honba>0)?"#e69640":"#2a3a28"}`,
+              color:(honba>0)?"#f0b060":"#777",
+            }}>🔴 {honba}本場</span>
+            <span style={{
+              display:"inline-flex",alignItems:"center",gap:3,
+              padding:"2px 8px",borderRadius:10,fontSize:11,fontWeight:700,
+              background:(kyotaku>0)?"rgba(80,180,120,.22)":"rgba(255,255,255,.05)",
+              border:`1px solid ${(kyotaku>0)?"#2ecc71":"#2a3a28"}`,
+              color:(kyotaku>0)?"#7fe0a8":"#777",
+            }}>🀫 供託 {kyotaku}本{kyotaku>0?`（${kyotaku*1000}点）`:""}</span>
+          </div>
+          <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"center"}}>
+            <span style={{fontSize:9,color:"#555"}}>ドラ:</span>
+            {doraList.map((d,i)=><Tile key={i} pai={d} W={22} H={30} FS={8} hl/>)}
+          </div>
+          <div style={{fontSize:9,color:"#444"}}>残山 {yama_rest}枚</div>
+          {lastAction&&(
+            <div style={{
+              padding:"3px 8px",borderRadius:5,fontSize:10,fontWeight:700,
+              textAlign:"center",maxWidth:190,lineHeight:1.4,
+              background:lastAction.type==="hora"?"rgba(46,204,113,.25)":
+                         lastAction.type==="reach"?"rgba(231,76,60,.25)":"rgba(255,255,255,.05)",
+              color:lastAction.type==="hora"?"#2ecc71":
+                    lastAction.type==="reach"?"#e74c3c":"#ccc",
+            }}>
+              {lastAction.type==="tsumo"&&`P${lastAction.actor} ツモ ${lastAction.pai}`}
+              {lastAction.type==="dahai"&&`P${lastAction.actor} 打 ${lastAction.pai}${lastAction.tsumogiri?" (ツモ切)":""}`}
+              {lastAction.type==="chi"&&`P${lastAction.actor} チー`}
+              {lastAction.type==="pon"&&`P${lastAction.actor} ポン`}
+              {lastAction.type==="reach"&&`🔴 P${lastAction.actor} リーチ！`}
+              {lastAction.type==="hora"&&(
+                  <div>
+                    <div>🎉 P{lastAction.actor} {names[lastAction.actor]}</div>
+                    <div style={{fontSize:9,color:"#aaa"}}>
+                      {lastAction.target!=null?`ロン ← P${lastAction.target}`:"ツモ"}
+                      {lastAction.score?` +${lastAction.score.toLocaleString()}`:""}
+                    </div>
+                  </div>
+                )}
+              {lastAction.type==="ryukyoku"&&"💨 流局"}
+            </div>
+          )}
+        </div>
+
+        {/* ── 手牌 ── */}
+        {/* 下 P0 */}
+        <div ref={refP0} style={{position:"absolute",bottom:8,left:"50%",transform:"translateX(-50%)",
+                     display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <PLabel pi={0}/>
+          <HandRow tiles={tehais[0]} tsumo={tsumoTile[0]} lastPai={lastDahai}
+                   clickable={isHumanDiscardTurn}
+                   onTileClick={onHandTileClick}
+                   playableSet={new Set(Object.keys(dahaiTokenByTile))}
+                   hidden={isHidden(0)}/>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"center"}}>
+            {riichi[0]&&<RiichiBou/>}
+            <MeldTiles meldList={melds[0]}/>
+          </div>
+        </div>
+
+        {/* 上 P2 */}
+        <div ref={refP2} style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",
+                     display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <div style={{transform:"rotate(180deg)",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",justifyContent:"center"}}>
+            {riichi[2]&&<RiichiBou/>}
+            <MeldTiles meldList={melds[2]}/>
+          </div>
+          <HandRow tiles={tehais[2]} tsumo={tsumoTile[2]} lastPai={lastDahai} rotate={180} hidden={isHidden(2)}/>
+          <div style={{transform:"rotate(180deg)"}}><PLabel pi={2}/></div>
+        </div>
+
+        {/* 右 P1 */}
+        <div ref={refP1} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
+                     display:"flex",flexDirection:"row",alignItems:"center",gap:4}}>
+          <PLabel pi={1} vertical/>
+          <HandCol tiles={tehais[1]} tsumo={tsumoTile[1]} W={32} H={46} FS={12} hidden={isHidden(1)}/>
+          <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"center"}}>
+            {riichi[1]&&<div style={{writingMode:"vertical-rl"}}><RiichiBou/></div>}
+            {melds[1].map((m,mi)=>(
+              <div key={mi} style={{background:"rgba(0,0,0,.3)",borderRadius:3,padding:"2px",border:"1px solid #2a3a20"}}>
+                {(m.consumed||[]).map((c,ci)=><Tile key={ci} pai={c} W={26} H={36} FS={9}/>)}
+                {m.pai&&<Tile pai={m.pai} W={26} H={36} FS={9} hl/>}
+                <div style={{fontSize:7,color:"#888",textAlign:"center"}}>
+                  {m.type==="chi"?"チー":m.type==="pon"?"ポン":"槓"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 左 P3 */}
+        <div ref={refP3} style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",
+                     display:"flex",flexDirection:"row-reverse",alignItems:"center",gap:4}}>
+          <PLabel pi={3} vertical/>
+          <HandCol tiles={tehais[3]} tsumo={tsumoTile[3]} W={32} H={46} FS={12} hidden={isHidden(3)}/>
+          <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"center"}}>
+            {riichi[3]&&<div style={{writingMode:"vertical-rl"}}><RiichiBou/></div>}
+            {melds[3].map((m,mi)=>(
+              <div key={mi} style={{background:"rgba(0,0,0,.3)",borderRadius:3,padding:"2px",border:"1px solid #2a3a20"}}>
+                {(m.consumed||[]).map((c,ci)=><Tile key={ci} pai={c} W={26} H={36} FS={9}/>)}
+                {m.pai&&<Tile pai={m.pai} W={26} H={36} FS={9} hl/>}
+                <div style={{fontSize:7,color:"#888",textAlign:"center"}}>
+                  {m.type==="chi"?"チー":m.type==="pon"?"ポン":"槓"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>{/* 卓end */}
+
+      {/* ── モデル推論パネル（対人対局中は非表示） ── */}
+      {!humanSid&&meldInfer&&meldInfer.length>0&&(
+        <div style={{
+          position:"absolute",bottom:12,left:12,
+          background:"rgba(20,8,28,.88)",border:"1px solid #4a2a50",
+          borderRadius:10,padding:"10px 16px",minWidth:200,maxWidth:280,
+          backdropFilter:"blur(6px)",zIndex:10,
+        }}>
+          <div style={{fontSize:12,fontWeight:800,marginBottom:6,color:"#c89be3",
+                       letterSpacing:1}}>🀄 鳴き判断</div>
+          {meldInfer.map((m,mi)=>{
+            const ok=m.is_top1;
+            const isSkip=m.pred_label==="スルー";
+            return (
+              <div key={mi} style={{
+                borderTop:mi>0?"1px solid #2a1a40":"none",
+                paddingTop:mi>0?6:0,marginTop:mi>0?6:0,
+              }}>
+                <div style={{display:"flex",justifyContent:"space-between",
+                             alignItems:"center",marginBottom:2}}>
+                  <span style={{fontSize:12,color:"#9a8aaa"}}>P{m.player}</span>
+                  {!selfPlay&&(
+                    <span style={{fontSize:11,fontWeight:800,
+                                  color:ok?"#2ecc71":"#e74c3c"}}>
+                      {ok?"✅一致":"❌不一致"}
+                    </span>
+                  )}
+                </div>
+                <div style={{fontSize:13,color:isSkip?"#888":"#e3b04a",marginBottom:2}}>
+                  モデル → <span style={{fontWeight:800}}>{m.pred_label}</span>
+                </div>
+                {!selfPlay&&!ok&&(
+                  <div style={{fontSize:12,color:"#f39c12",marginBottom:2}}>
+                    実際 → <span style={{fontWeight:800}}>{m.label_label}</span>
+                  </div>
+                )}
+                {m.candidates&&(
+                  <div style={{marginTop:3}}>
+                    {m.candidates.map(c=>(
+                      <div key={c.idx} style={{display:"flex",
+                           justifyContent:"space-between",fontSize:11,
+                           color:"#776688",marginBottom:1}}>
+                        <span>{c.label}</span>
+                        <span style={{color:"#5a4a6a",marginLeft:10}}>
+                          {(c.prob*100).toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!humanSid&&infer&&(
+        <div style={{
+          position:"absolute",bottom:12,right:12,
+          background:"rgba(5,10,20,.88)",border:"1px solid #2a3a50",
+          borderRadius:10,padding:"10px 16px",minWidth:200,
+          backdropFilter:"blur(6px)",zIndex:10,
+        }}>
+          {!selfPlay&&(
+            <div style={{fontSize:14,fontWeight:800,marginBottom:4,
+                         color:infer.is_top1?"#2ecc71":infer.is_top3?"#f39c12":"#e74c3c"}}>
+              {infer.is_top1?"✅ TOP1":infer.is_top3?"△ TOP3":"❌ 圏外"}
+            </div>
+          )}
+          <div style={{fontSize:13,color:"#7ec8e3",marginBottom:2}}>
+            モデル → <span style={{fontWeight:800}}>{infer.pred_label}</span>
+          </div>
+          {!selfPlay&&!infer.is_top1&&(
+            <div style={{fontSize:13,color:"#f39c12",marginBottom:6}}>
+              正解 → <span style={{fontWeight:800}}>{infer.label_label}</span>
+            </div>
+          )}
+          {infer.top3_labels&&(
+            <div style={{borderTop:"1px solid #1a2a40",paddingTop:6,marginTop:4}}>
+              {infer.top3_labels.map(t=>(
+                <div key={t.rank} style={{display:"flex",justifyContent:"space-between",
+                                          fontSize:12,color:"#888",marginBottom:2}}>
+                  <span>{t.rank}位: {t.label}</span>
+                  <span style={{color:"#4a6a88",marginLeft:12}}>{(t.prob*100).toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+
+// =====================================================================
+// 対人対局: 人間の操作パネル
+//   pending.kind: "dahai"(打牌/リーチ) | "meld"(ポン/チー/明槓) | "kan"(暗槓/加槓)
+// =====================================================================
+function HumanActionPanel({pending,onPick,submitting,seat}){
+  const kind=pending.kind;
+  const opts=pending.options||[];
+  // リーチ選択の2段階フロー用ローカル状態: false=未選択, true=リーチ宣言牌選択中
+  const [riichiMode,setRiichiMode]=React.useState(false);
+  // pending の「中身」が変わったときだけモードをリセットする。
+  //   ポーリングで pending オブジェクトは毎回作り直されるため、参照で判定すると
+  //   リーチ選択中に毎回リセットされ、宣言牌を選ぶ前にキャンセルされてしまう。
+  //   → kind・player・候補トークン列から安定したシグネチャを作り、それが
+  //     変わったときだけリセットする。
+  const pendingSig = `${kind}|${pending.player}|${opts.map(o=>o.token).join(",")}`;
+  React.useEffect(()=>{ setRiichiMode(false); },[pendingSig]);
+
+  // 和了する/見逃す の選択
+  if(kind==="agari"){
+    const winOpt=opts.find(o=>o.action==="agari");
+    const skipOpt=opts.find(o=>o.action==="skip");
+    const akLabel=pending.agari_kind==="tsumo"?"ツモ":"ロン";
+    return(
+      <div style={{...panelStyle,minWidth:220,borderColor:"#2ecc71"}}>
+        <div style={{...panelTitle,color:"#7fe0a8"}}>🀄 {akLabel}和了できます！</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={()=>!submitting&&onPick(winOpt.token)} disabled={submitting}
+            style={{
+              padding:"11px 20px",borderRadius:8,cursor:submitting?"wait":"pointer",
+              fontSize:15,fontWeight:800,color:"#fff",letterSpacing:1,
+              background:"linear-gradient(135deg,#1a9850,#2ecc71)",
+              border:"1px solid #7fe0a8",boxShadow:"0 2px 10px rgba(46,204,113,.4)",
+            }}>{winOpt.label}</button>
+          <button onClick={()=>!submitting&&onPick(skipOpt.token)} disabled={submitting}
+            style={cancelBtnStyle}>{skipOpt.label}</button>
+        </div>
+      </div>
+    );
+  }
+
+  // 打牌: 手牌を直接クリックして切る。
+  //   リーチ可能なときは「リーチする / リーチせず打牌」を明確に選べるようにする。
+  if(kind==="dahai"){
+    const riichiOpts=opts.filter(o=>o.action==="riichi");
+    const hasRiichi=riichiOpts.length>0;
+
+    // リーチ宣言牌選択モード: 手牌クリックではなく、宣言牌をここで選ぶ
+    if(hasRiichi && riichiMode){
+      return(
+        <div style={{...panelStyle,minWidth:260,borderColor:"#e74c3c"}}>
+          <div style={{...panelTitle,color:"#ff9a8a"}}>🔴 リーチ宣言牌を選択</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",marginBottom:8}}>
+            {riichiOpts.map(o=>(
+              <button key={o.token} onClick={()=>!submitting&&onPick(o.token)}
+                disabled={submitting} style={{...tileBtn,border:"2px solid #e74c3c",borderRadius:6}}>
+                <Tile pai={o.pai} W={38} H={54} FS={13}/>
+              </button>
+            ))}
+          </div>
+          <button onClick={()=>setRiichiMode(false)} disabled={submitting}
+            style={cancelBtnStyle}>← リーチをやめる（戻る）</button>
+        </div>
+      );
+    }
+
+    // 通常: 手牌クリックで打牌。リーチ可能なら「リーチする」ボタンを出す。
+    return(
+      <div style={{...panelStyle,minWidth:220}}>
+        <div style={panelTitle}>あなたの番 — 手牌をクリックして切る</div>
+        {hasRiichi&&(
+          <div style={{marginTop:6,display:"flex",justifyContent:"center"}}>
+            <button onClick={()=>setRiichiMode(true)} disabled={submitting}
+              style={{
+                padding:"9px 22px",borderRadius:8,cursor:submitting?"wait":"pointer",
+                fontSize:14,fontWeight:800,color:"#fff",letterSpacing:2,
+                background:"linear-gradient(135deg,#c0392b,#e74c3c)",
+                border:"1px solid #ff9a8a",boxShadow:"0 2px 10px rgba(231,76,60,.4)",
+              }}>🔴 リーチする</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 鳴き / 槓: ラベルボタン（スキップ＝キャンセルを目立たせる）
+  const title=kind==="meld"
+    ? `鳴きますか？（${pending.pai||""}）`
+    : "槓しますか？";
+  const actionOpts=opts.filter(o=>o.action!=="skip");
+  const skipOpt=opts.find(o=>o.action==="skip");
+  return(
+    <div style={panelStyle}>
+      <div style={panelTitle}>{title}</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:skipOpt?8:0}}>
+        {actionOpts.map(o=>(
+          <button key={o.token} onClick={()=>!submitting&&onPick(o.token)}
+            disabled={submitting}
+            style={{
+              padding:"9px 18px",borderRadius:8,cursor:submitting?"wait":"pointer",
+              fontSize:14,fontWeight:800,color:"#fff",
+              background:"linear-gradient(135deg,#0d6a80,#0a7050)",
+              border:"1px solid #2ecc71",
+            }}>
+            {o.label}
+            {o.consumed&&o.consumed.length>0&&(
+              <span style={{fontSize:11,color:"#9fd",marginLeft:6}}>{o.consumed.join(" ")}</span>
+            )}
+          </button>
+        ))}
+      </div>
+      {skipOpt&&(
+        <button onClick={()=>!submitting&&onPick(skipOpt.token)} disabled={submitting}
+          style={cancelBtnStyle}>✕ 鳴かない（スキップ）</button>
+      )}
+    </div>
+  );
+}
+// キャンセル/スキップ/戻る 用の分かりやすいボタン
+const cancelBtnStyle={
+  display:"block",width:"100%",padding:"8px 0",borderRadius:8,
+  cursor:"pointer",fontSize:13,fontWeight:800,letterSpacing:1,
+  color:"#ddd",background:"rgba(120,120,130,.25)",
+  border:"1.5px solid #888",textAlign:"center",
+};
+const panelStyle={
+  // 右下に配置（手牌と被らないように）。縦位置は手牌の少し上あたり。
+  position:"absolute",bottom:110,right:16,
+  background:"rgba(8,14,22,.96)",border:"1px solid #2a5a40",
+  borderRadius:12,padding:"12px 18px",zIndex:25,minWidth:200,maxWidth:300,
+  boxShadow:"0 6px 24px rgba(0,0,0,.7)",backdropFilter:"blur(6px)",
+};
+const panelTitle={
+  fontSize:13,fontWeight:800,color:"#7fe0a8",marginBottom:8,
+  textAlign:"center",letterSpacing:1,
+};
+const tileBtn={
+  background:"transparent",border:"none",padding:2,cursor:"pointer",
+  borderRadius:4,transition:"transform .08s",
+};
+
+// =====================================================================
+// メインApp
+// =====================================================================
+function App(){
+  const[mjson,setMjson]=useState("");
+  const[game,setGame]=useState(null);
+  const[kyokuIdx,setKyokuIdx]=useState(0);
+  const[step,setStep]=useState(0);
+  const[loading,setLoading]=useState(false);
+  const[genLoading,setGenLoading]=useState(false);
+  const[error,setError]=useState("");
+  const[serverOk,setServerOk]=useState(null);
+  const[sideOpen,setSideOpen]=useState(true);
+
+  // ── 対人対局（人間 vs AI） ──
+  const[humanSid,setHumanSid]=useState(null);   // セッションID（null=通常ビューアー）
+  const[humanSeat,setHumanSeat]=useState(0);    // 人間の席
+  const[pending,setPending]=useState(null);     // 人間が今選ぶべき候補
+  const[hgFinished,setHgFinished]=useState(false);
+  const[submitting,setSubmitting]=useState(false);
+  const humanSidRef=useRef(null);
+  humanSidRef.current=humanSid;
+  const[hideOpponents,setHideOpponents]=useState(false);  // 相手の手牌を隠す
+  // AI打牌の「一拍」演出用: 表示中の位置(kyoku,step)を、サーバー最新へ
+  // 1手ずつ追いつかせる。dahaiイベントの後は約1秒止めてテンポを作る。
+  const pendingRef=useRef(null); pendingRef.current=pending;
+  const gameRef=useRef(null);
+  const kyokuIdxRef=useRef(0); kyokuIdxRef.current=kyokuIdx;
+  const stepRef=useRef(0); stepRef.current=step;
+
+  useEffect(()=>{
+    fetch(`${API}/health`).then(r=>r.json()).then(j=>setServerOk(j.status==="ok")).catch(()=>setServerOk(false));
+  },[]);
+
+  useEffect(()=>{
+    const h=e=>{
+      if(!game)return;
+      if(humanSidRef.current)return; // 対人対局中は自動追従なので手動移動は無効
+      const kyoku=game.kyokus[kyokuIdx];
+      if(!kyoku)return;
+      const max=kyoku.events.length-1;
+      if(e.key==="ArrowRight"||e.key===" "){e.preventDefault();setStep(s=>Math.min(s+1,max));}
+      else if(e.key==="ArrowLeft"){setStep(s=>Math.max(s-1,0));}
+      else if(e.key==="ArrowUp"){setKyokuIdx(i=>{const n=Math.max(i-1,0);setStep(0);return n;});}
+      else if(e.key==="ArrowDown"){setKyokuIdx(i=>{const n=Math.min(i+1,game.kyokus.length-1);setStep(0);return n;});}
+    };
+    window.addEventListener("keydown",h);
+    return()=>window.removeEventListener("keydown",h);
+  },[game,kyokuIdx]);
+
+  // ── 対人対局: セッション開始 ──
+  const handleStartHuman=useCallback(async(seat)=>{
+    setError("");setGame(null);setPending(null);setHgFinished(false);
+    try{
+      const r=await fetch(`${API}/human/new`,{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({human_player:seat})});
+      if(!r.ok){const j=await r.json();throw new Error(j.detail||"エラー");}
+      const d=await r.json();
+      setHumanSid(d.session_id);setHumanSeat(d.human_player);
+      setHideOpponents(true);  // 対人対局は既定で相手の手牌を隠す
+      setKyokuIdx(0);setStep(0);
+    }catch(e){setError(e.message);}
+  },[]);
+
+  // ── 対人対局: ポーリング（局面と入力待ちを取得） ──
+  useEffect(()=>{
+    if(!humanSid) return;
+    let alive=true;
+    const poll=async()=>{
+      if(!alive||humanSidRef.current!==humanSid) return;
+      try{
+        const r=await fetch(`${API}/human/state?session_id=${humanSid}`);
+        if(r.ok){
+          const d=await r.json();
+          if(!alive) return;
+          setGame(d);
+          gameRef.current=d;
+          setPending(d.pending||null);
+          setHgFinished(!!d.finished);
+          if(d.error) setError(d.error.split("\n")[0]);
+          // 注意: ここで最新へ即ジャンプしない。
+          //   入力待ち(pending)でも、そこへ至るまでの AI の手は pacing effect が
+          //   1手ずつ見せる。パネルは「表示が末尾に追いついたら」出す（下の atLatest）。
+          //   終了時のみ、余韻の後に最終局面まで見せる（pacing が自然に到達）。
+        }
+      }catch(e){/* 一時的な失敗は無視して次のポールへ */}
+      if(alive) setTimeout(poll, pendingRef.current?500:350);
+    };
+    poll();
+    return()=>{alive=false;};
+  },[humanSid]);
+
+  // ── 対人対局: 「一拍」ペーシング ──
+  //   表示位置(kyokuIdx,step)をサーバー最新へ *必ず1手ずつ* 進める。
+  //   これにより AI3体の打牌が一斉に見えることはなく、1体ずつ順に見える。
+  //   各イベント種別ごとに待ち時間を変える（AI打牌=約0.8秒）。
+  //   入力待ち/終了時は poller が即ジャンプするのでここは介入しない。
+  useEffect(()=>{
+    if(!humanSid) return;
+    let alive=true;
+    const delayFor=(ev)=>{
+      if(!ev) return 150;
+      if(ev.type==="dahai") return 500;       // AI1体の打牌ごとに一拍（約0.5秒）
+      if(ev.type==="tsumo") return 100;
+      if(ev.type==="reach") return 600;
+      if(ev.type==="pon"||ev.type==="chi"||ev.type==="daiminkan"||ev.type==="ankan"||ev.type==="kakan") return 650;
+      if(ev.type==="hora"||ev.type==="ryukyoku") return 3200;  // 精算画面をしっかり見せる
+      return 200;
+    };
+    const tick=()=>{
+      if(!alive) return;
+      const g=gameRef.current;
+      // ゲーム未取得・終了中はペーシングしない
+      if(!g||!g.kyokus||!g.kyokus.length||hgFinished){
+        return schedule(150);
+      }
+      const lastK=g.kyokus.length-1;
+      const ki=kyokuIdxRef.current, sp=stepRef.current;
+      const curEvs=g.kyokus[ki]?.events||[];
+
+      // 現局の中でまだ末尾に達していない → 次の1手だけ進める
+      //   pending(入力待ち)であっても、そこへ至る AI の手を1手ずつ見せるため進める。
+      if(sp < curEvs.length-1){
+        const nextEv=curEvs[sp+1];
+        setStep(sp+1);
+        return schedule(delayFor(nextEv));   // 進めた「その手」の種別で待つ
+      }
+      // 現局は末尾。まだ先の局がサーバーにある → 次局の頭へ1つだけ進む
+      if(ki < lastK){
+        setKyokuIdx(ki+1); setStep(0);
+        return schedule(600);
+      }
+      // 追いついている → 短い間隔で再確認（新しいAIの手が来たら1手ずつ進む）
+      return schedule(150);
+    };
+    let timer=null;
+    const schedule=(ms)=>{ if(alive) timer=setTimeout(tick, ms); };
+    schedule(300);
+    return()=>{alive=false; if(timer) clearTimeout(timer);};
+  },[humanSid,hgFinished]);
+
+  // ── 対人対局: 人間の選択を送信 ──
+  const submitAction=useCallback(async(token)=>{
+    if(!humanSid||submitting) return;
+    setSubmitting(true);
+    try{
+      const r=await fetch(`${API}/human/action`,{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({session_id:humanSid,token})});
+      if(!r.ok){const j=await r.json();throw new Error(j.detail||"送信失敗");}
+      setPending(null); // 楽観的にクリア。次のポールで最新化。
+    }catch(e){setError(e.message);}
+    finally{setSubmitting(false);}
+  },[humanSid,submitting]);
+
+  // ── 対人対局: 終了して通常モードへ ──
+  const quitHuman=useCallback(async()=>{
+    const sid=humanSid;
+    setHumanSid(null);setPending(null);setHgFinished(false);setGame(null);
+    if(sid){try{await fetch(`${API}/human/quit?session_id=${sid}`,{method:"POST"});}catch(e){}}
+  },[humanSid]);
+
+  const handleGenerate=useCallback(async()=>{
+    setError("");setGenLoading(true);setGame(null);
+    try{
+      const r=await fetch(`${API}/generate_game`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seed:null})});
+      if(!r.ok){const j=await r.json();throw new Error(j.detail||"エラー");}
+      const d=await r.json();setGame(d);setKyokuIdx(0);setStep(0);
+    }catch(e){setError(e.message);}finally{setGenLoading(false);}
+  },[]);
+
+  const handleInfer=useCallback(async()=>{
+    setError("");setLoading(true);setGame(null);
+    try{
+      const r=await fetch(`${API}/infer_game`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mjson,player:null})});
+      if(!r.ok){const j=await r.json();throw new Error(j.detail||"エラー");}
+      const d=await r.json();setGame(d);setKyokuIdx(0);setStep(0);
+    }catch(e){setError(e.message);}finally{setLoading(false);}
+  },[mjson]);
+
+  const kyoku=game?.kyokus?.[kyokuIdx];
+  const maxStep=kyoku?kyoku.events.length-1:0;
+  const anyLoading=loading||genLoading;
+  const goKyoku=i=>{setKyokuIdx(i);setStep(0);};
+
+  // 対人対局: 表示位置がサーバー最新の末尾に追いついているか。
+  //   追いつくまで（＝AIの手を1手ずつ見せている間）は操作パネルを出さない。
+  const atLatest = !!(game && game.kyokus && game.kyokus.length
+    && kyokuIdx===game.kyokus.length-1
+    && kyoku && step>=kyoku.events.length-1);
+  // パネル/手牌クリックを許可するのは「追いついたとき」だけ。
+  const canAct = !!(humanSid && pending && atLatest);
+
+  const TYPE_LABEL={tsumo:"ツモ",dahai:"打牌",chi:"チー",pon:"ポン",daiminkan:"明槓",
+                    ankan:"暗槓",kakan:"加槓",reach:"リーチ",hora:"和了",ryukyoku:"流局",dora:"ドラ追加"};
+  const curEv=kyoku?.events?.[step];
+
+  const Btn=({onClick,disabled,children,primary})=>(
+    <button onClick={onClick} disabled={disabled} style={{
+      padding:"7px 18px",borderRadius:6,border:"none",fontSize:14,fontWeight:700,
+      cursor:disabled?"not-allowed":"pointer",
+      background:disabled?"#1a2030":primary?"linear-gradient(135deg,#1a4a8e,#1a3a6e)":"rgba(255,255,255,.06)",
+      color:disabled?"#444":"#ddd",
+      boxShadow:primary?"0 2px 8px rgba(26,74,142,.4)":"none",
+    }}>{children}</button>
+  );
+
+  return(
+    <div style={{width:"100%",height:"100vh",display:"flex",flexDirection:"column",background:"#0b1018"}}>
+
+      {/* ── ヘッダー ── */}
+      <div style={{
+        background:"linear-gradient(135deg,#0a1a30,#150a28)",
+        borderBottom:"1px solid #1a2a40",
+        padding:"8px 20px",display:"flex",alignItems:"center",gap:14,flexShrink:0,
+      }}>
+        <span style={{fontSize:22}}>🀄</span>
+        <span style={{fontSize:17,fontWeight:800,letterSpacing:3,color:"#c8b8e8"}}>麻雀牌譜ビューアー</span>
+        <span style={{fontSize:10,fontWeight:700,background:"#1a4a20",color:"#2ecc71",border:"1px solid #2ecc71",borderRadius:4,padding:"2px 7px",letterSpacing:1}}>修正済み v3</span>
+        <div style={{marginLeft:"auto",display:"flex",gap:10,alignItems:"center"}}>
+          <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:serverOk===null?"#555":serverOk?"#2ecc71":"#e74c3c"}}/>
+            <span style={{fontSize:11,color:"#555"}}>{serverOk?"接続OK":"未接続"}</span>
+          </div>
+          {game&&(
+            <button onClick={()=>setHideOpponents(v=>!v)} style={{
+              padding:"5px 12px",borderRadius:5,
+              background:hideOpponents?"rgba(120,60,160,.35)":"transparent",
+              border:`1px solid ${hideOpponents?"#7a3cb8":"#2a3a50"}`,
+              color:hideOpponents?"#c8a8e8":"#777",fontSize:12,cursor:"pointer",fontWeight:700,
+            }}>{hideOpponents?"🙈 相手の手牌: 隠す":"👁 相手の手牌: 見える"}</button>
+          )}
+          <button onClick={()=>setSideOpen(o=>!o)} style={{
+            padding:"5px 12px",borderRadius:5,background:"transparent",
+            border:"1px solid #2a3a50",color:"#777",fontSize:12,cursor:"pointer",
+          }}>{sideOpen?"◀ 閉じる":"▶ メニュー"}</button>
+        </div>
+      </div>
+
+      <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+
+        {/* ── サイドパネル ── */}
+        {sideOpen&&(
+          <div style={{width:230,background:"#0d1520",borderRight:"1px solid #1a2a40",
+                       display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
+            <div style={{padding:"12px 10px 0",flexShrink:0}}>
+
+              {!humanSid&&(
+                <button onClick={()=>handleStartHuman(humanSeat)} disabled={anyLoading} style={{
+                  width:"100%",padding:"12px 0",borderRadius:6,border:"none",marginBottom:8,
+                  background:anyLoading?"#1a2030":"linear-gradient(135deg,#7a2ca0,#b8365a)",
+                  color:"#fff",fontWeight:800,fontSize:14,cursor:anyLoading?"not-allowed":"pointer",letterSpacing:1,
+                }}>🎮 人間で対戦（AI3人と）</button>
+              )}
+              {!humanSid&&(
+                <div style={{display:"flex",gap:4,marginBottom:8,alignItems:"center"}}>
+                  <span style={{fontSize:10,color:"#555"}}>自分の席:</span>
+                  {[0,1,2,3].map(s=>(
+                    <button key={s} onClick={()=>setHumanSeat(s)} style={{
+                      flex:1,padding:"4px 0",borderRadius:4,fontSize:11,cursor:"pointer",
+                      background:humanSeat===s?"rgba(160,60,120,.4)":"rgba(255,255,255,.03)",
+                      border:`1px solid ${humanSeat===s?"#b8365a":"#1a2a40"}`,
+                      color:humanSeat===s?"#e3a0c0":"#666",fontWeight:700,
+                    }}>P{s}</button>
+                  ))}
+                </div>
+              )}
+              {humanSid&&(
+                <button onClick={quitHuman} style={{
+                  width:"100%",padding:"10px 0",borderRadius:6,border:"1px solid #b8365a",marginBottom:8,
+                  background:"rgba(120,20,60,.2)",color:"#e3a0c0",fontWeight:700,fontSize:13,cursor:"pointer",
+                }}>■ 対局を終了</button>
+              )}
+
+              <button onClick={handleGenerate} disabled={anyLoading||!!humanSid} style={{
+                width:"100%",padding:"12px 0",borderRadius:6,border:"none",marginBottom:8,
+                background:(anyLoading||humanSid)?"#1a2030":"linear-gradient(135deg,#0d4a60,#0a5040)",
+                color:"#fff",fontWeight:800,fontSize:14,cursor:(anyLoading||humanSid)?"not-allowed":"pointer",letterSpacing:1,
+              }}>{genLoading?"⏳ 生成中…":"🤖 AI対戦を観戦"}</button>
+
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                <div style={{flex:1,height:1,background:"#1a2a40"}}/>
+                <span style={{fontSize:9,color:"#333"}}>または牌譜を読み込む</span>
+                <div style={{flex:1,height:1,background:"#1a2a40"}}/>
+              </div>
+
+              <textarea value={mjson} onChange={e=>setMjson(e.target.value)}
+                placeholder="mjai形式の牌譜を貼り付け"
+                style={{width:"100%",height:80,resize:"none",
+                        background:"#080d14",border:"1px solid #1a2a40",borderRadius:5,
+                        color:"#8aaccc",padding:7,fontSize:10,fontFamily:"monospace",
+                        outline:"none",lineHeight:1.5,boxSizing:"border-box"}}/>
+
+              <button onClick={handleInfer} disabled={anyLoading||!mjson.trim()} style={{
+                width:"100%",padding:"9px 0",borderRadius:5,border:"none",marginTop:5,marginBottom:8,
+                background:(anyLoading||!mjson.trim())?"#1a2030":"linear-gradient(135deg,#501a1a,#501a50)",
+                color:"#fff",fontWeight:700,fontSize:13,cursor:(anyLoading||!mjson.trim())?"not-allowed":"pointer",
+              }}>{loading?"読み込み中…":"▶ 読み込む"}</button>
+
+              {error&&<div style={{fontSize:10,color:"#e74c3c",background:"#1a0808",padding:7,borderRadius:4,marginBottom:8,wordBreak:"break-all"}}>⚠ {error}</div>}
+            </div>
+
+            <div style={{overflowY:"auto",flex:1,padding:"0 10px 10px"}}>
+              {game&&<>
+                <div style={{fontSize:11,color:"#555",marginBottom:6,fontWeight:700,letterSpacing:1}}>局一覧</div>
+                {game.kyokus.map((k,i)=>(
+                  <div key={i} onClick={()=>goKyoku(i)} style={{
+                    padding:"8px 10px",borderRadius:6,cursor:"pointer",marginBottom:4,
+                    background:i===kyokuIdx?"rgba(100,50,160,.35)":"rgba(255,255,255,.02)",
+                    border:`1px solid ${i===kyokuIdx?"#7a3cb877":"#1a2a40"}`,
+                  }}>
+                    <div style={{fontSize:12,fontWeight:700,color:i===kyokuIdx?"#c39bd3":"#999"}}>{k.title}</div>
+                    <div style={{fontSize:10,color:"#444",marginTop:2}}>{k.events.length}手</div>
+                  </div>
+                ))}
+                {game.end_scores&&(
+                  <div style={{marginTop:10,padding:"8px 10px",borderRadius:6,background:"rgba(160,50,50,.1)",border:"1px solid #50101044"}}>
+                    <div style={{fontSize:11,color:"#c0392b",fontWeight:700,marginBottom:5}}>最終スコア</div>
+                    {[...game.end_scores.map((s,i)=>({s,i}))].sort((a,b)=>b.s-a.s).map(({s,i},rank)=>(
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#bbb",marginBottom:3}}>
+                        <span>{["🥇","🥈","🥉","　"][rank]} {game.player_names[i]||`P${i}`}</span>
+                        <span style={{fontWeight:800,color:s>25000?"#2ecc71":s<25000?"#e74c3c":"#888"}}>{s.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>}
+            </div>
+
+            <div style={{padding:"8px 10px",borderTop:"1px solid #1a2a40",flexShrink:0}}>
+              <div style={{fontSize:10,color:"#333",lineHeight:2}}>
+                ← → / Space : 1手ずつ移動<br/>
+                ↑ ↓ : 局を移動<br/>
+                進行バーをクリック : 任意の手へ
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── メインエリア ── */}
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          {!game?(
+            <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20,color:"#2a3a40"}}>
+              <div style={{fontSize:72}}>🀄</div>
+              {anyLoading
+                ?<div style={{fontSize:16,color:"#4a6a80"}}>AIが対局中…</div>
+                :<div style={{fontSize:14,color:"#3a4a50",textAlign:"center",lineHeight:2.2}}>
+                  「🤖 AI対戦を生成」または牌譜を読み込んでください<br/>
+                  <span style={{fontSize:12,color:"#2a3a40"}}>← → キーまたはボタンで1手ずつ進められます</span>
+                </div>
+              }
+            </div>
+          ):kyoku?(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {/* 卓 */}
+              <div style={{flex:1,overflow:"hidden",position:"relative"}}>
+                <MahjongTable kyoku={kyoku} step={step} names={game.player_names} selfPlay={game.is_self_play}
+                              humanSeat={humanSid?humanSeat:null} pending={pending} onPick={submitAction}
+                              submitting={submitting} humanSid={humanSid} hideOpponents={hideOpponents}
+                              canAct={canAct}/>
+
+                {/* ── 対人対局: 人間の操作パネル（表示が追いついたときだけ） ── */}
+                {canAct&&(
+                  <HumanActionPanel pending={pending} onPick={submitAction}
+                                    submitting={submitting} seat={humanSeat}/>
+                )}
+                {humanSid&&!hgFinished&&!canAct&&(
+                  <div style={{
+                    position:"absolute",bottom:118,right:16,
+                    background:"rgba(10,20,30,.9)",border:"1px solid #2a3a50",
+                    borderRadius:20,padding:"6px 16px",fontSize:12,color:"#7ec8e3",zIndex:20,
+                  }}>🤖 AIの手番…</div>
+                )}
+                {humanSid&&hgFinished&&game.end_scores&&(()=>{
+                  const ranked=[...game.end_scores.map((s,i)=>({s,i}))].sort((a,b)=>b.s-a.s);
+                  const medals=["🥇","🥈","🥉","4️⃣"];
+                  const myRank=ranked.findIndex(r=>r.i===humanSeat)+1;
+                  return(
+                    <div style={{
+                      position:"absolute",inset:0,zIndex:50,
+                      background:"rgba(2,6,12,.92)",backdropFilter:"blur(8px)",
+                      display:"flex",flexDirection:"column",alignItems:"center",
+                      justifyContent:"center",gap:18,
+                    }}>
+                      <div style={{fontSize:34,fontWeight:900,letterSpacing:6,
+                        color:"#f0d060",textShadow:"0 2px 20px rgba(240,208,96,.4)"}}>
+                        対 局 終 了
+                      </div>
+                      <div style={{fontSize:16,fontWeight:700,
+                        color:myRank===1?"#f0d060":myRank<=2?"#7fe0a8":"#9ec8e0"}}>
+                        あなたは {myRank}位（{medals[myRank-1]}）でした
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:10,minWidth:420}}>
+                        {ranked.map((r,rank)=>{
+                          const me=r.i===humanSeat;
+                          return(
+                            <div key={r.i} style={{
+                              display:"flex",alignItems:"center",justifyContent:"space-between",
+                              gap:20,padding:"14px 26px",borderRadius:12,
+                              background:me?"linear-gradient(135deg,rgba(240,208,96,.18),rgba(240,208,96,.06))"
+                                          :"rgba(255,255,255,.04)",
+                              border:`2px solid ${rank===0?"#f0d060":me?"#7fe0a8":"#2a3a48"}`,
+                            }}>
+                              <span style={{fontSize:28,minWidth:44}}>{medals[rank]}</span>
+                              <span style={{fontSize:18,fontWeight:800,flex:1,
+                                color:me?"#f0e0a0":"#ddd"}}>
+                                {game.player_names[r.i]||`P${r.i}`}{me?"（あなた）":""}
+                              </span>
+                              <span style={{fontSize:22,fontWeight:900,minWidth:110,textAlign:"right",
+                                color:r.s>=25000?"#2ecc71":"#e74c3c"}}>
+                                {r.s.toLocaleString()}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button onClick={quitHuman} style={{
+                        marginTop:12,padding:"12px 32px",borderRadius:10,border:"none",
+                        background:"linear-gradient(135deg,#7a2ca0,#b8365a)",color:"#fff",
+                        fontWeight:800,fontSize:15,letterSpacing:1,cursor:"pointer",
+                      }}>閉じる</button>
+                    </div>
+                  );
+                })()}
+                {humanSid&&hgFinished&&!game.end_scores&&(
+                  <div style={{
+                    position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",
+                    background:"rgba(20,10,30,.9)",border:"1px solid #7a3cb8",
+                    borderRadius:12,padding:"10px 22px",fontSize:14,color:"#c39bd3",
+                    fontWeight:700,zIndex:20,
+                  }}>対局終了 — お疲れさまでした</div>
+                )}
+              </div>
+
+              {/* ── コントローラー ── */}
+              <div style={{
+                flexShrink:0,background:"#080d14",borderTop:"1px solid #1a2a40",
+                padding:"10px 20px",display:"flex",alignItems:"center",gap:14,
+              }}>
+                {/* イベント情報 */}
+                <div style={{fontSize:13,color:"#aaa",minWidth:220}}>
+                  {curEv&&(
+                    <span style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{color:"#444",fontSize:12}}>{step+1}/{maxStep+1}</span>
+                      <span style={{
+                        background:"rgba(255,255,255,.06)",padding:"3px 8px",borderRadius:4,
+                        color:"#c8c0b0",fontSize:13,fontWeight:700,
+                      }}>{TYPE_LABEL[curEv.type]||curEv.type}</span>
+                      {curEv.actor!=null&&<span style={{color:"#888"}}>P{curEv.actor} {game.player_names[curEv.actor]||""}</span>}
+                      {curEv.raw?.pai&&<span style={{color:"#c39bd3",fontWeight:700}}>{curEv.raw.pai}</span>}
+                    </span>
+                  )}
+                </div>
+
+                {/* 進行バー */}
+                <div style={{flex:1,height:6,background:"#1a2a40",borderRadius:3,overflow:"hidden",cursor:"pointer"}}
+                     onClick={e=>{
+                       const rect=e.currentTarget.getBoundingClientRect();
+                       setStep(Math.round(((e.clientX-rect.left)/rect.width)*maxStep));
+                     }}>
+                  <div style={{
+                    height:"100%",borderRadius:3,transition:"width .1s",
+                    background:"linear-gradient(90deg,#7a3cb8,#2a7ab8)",
+                    width:`${maxStep>0?(step/maxStep)*100:0}%`,
+                  }}/>
+                </div>
+
+                {/* ボタン群 */}
+                <div style={{display:"flex",gap:6}}>
+                  <Btn onClick={()=>setStep(0)}>|◀</Btn>
+                  <Btn onClick={()=>setStep(s=>Math.max(s-1,0))} disabled={step===0}>◀</Btn>
+                  <Btn onClick={()=>setStep(s=>Math.min(s+1,maxStep))} disabled={step===maxStep} primary>▶ 次へ</Btn>
+                  <Btn onClick={()=>setStep(maxStep)}>▶|</Btn>
+                </div>
+
+                {/* 局移動 */}
+                <div style={{display:"flex",gap:6}}>
+                  <Btn onClick={()=>goKyoku(Math.max(0,kyokuIdx-1))} disabled={kyokuIdx===0}>前局</Btn>
+                  <Btn onClick={()=>goKyoku(Math.min(game.kyokus.length-1,kyokuIdx+1))} disabled={kyokuIdx===game.kyokus.length-1}>次局</Btn>
+                </div>
+              </div>
+            </div>
+          ):null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

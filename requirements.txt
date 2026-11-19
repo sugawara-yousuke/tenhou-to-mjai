@@ -1,0 +1,11 @@
+# 動作確認済み: Python 3.8 + torch 2.2.0 (CUDA 12.1) / Python 3.12 + torch 2.x (CPU)
+torch>=2.2
+tqdm
+# 牌譜ビューア（serve/server.py）
+fastapi
+uvicorn
+pydantic
+# 学習曲線の描画（rl/reward_plot.py など）。対局・評価だけなら不要
+matplotlib
+# Hugging Face 版の牌譜（*.mjai.json.zst）を変換するときだけ必要（debug/convert_hf_tar.py）
+zstandard
