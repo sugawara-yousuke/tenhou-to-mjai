@@ -1,5 +1,7 @@
 # tenhou-to-mjai — Transformer 麻雀AI（天鳳鳳凰卓の牌譜で模倣学習）
 
+**English summary.** A four-player Japanese (riichi) mahjong AI that imitates Tenhou Houou-table players with a single Transformer deciding discards, riichi, calls and kans. It reaches the supervised-learning accuracy reported for Suphx (discard 77.0% vs 76.7%). The repository includes a game simulator following Tenhou rules (exceptions are listed below), a paired (duplicate) evaluation script, a browser replay viewer, and trained weights, so you can run games and evaluations right after cloning. Tenhou game logs are not included.
+
 天鳳鳳凰卓の牌譜から、打牌・リーチ・鳴き・槓の判断を **1つの Transformer** で模倣学習した四人麻雀AIです。
 自前の対局シミュレータ、同卓複式の評価スクリプト、ブラウザで見られる牌譜ビューアを含みます。
 学習済みの重み（`weights/model_bc_best.pt`）を同梱しているので、clone してすぐに対局と評価を回せます。
@@ -19,7 +21,21 @@
 | 鳴き・槓 | 92.8%（チー・ポン・槓の統合） | チー 95.0% / ポン 91.9% / 槓 94.0% |
 
 学習データは 2024 年の鳳凰卓 5 万半荘 × 3 エポックです（Suphx は打牌に 1,500 万サンプル）。
-データを 15 万半荘に増やしても一致率はほぼ変わらず（+0.1pt）、データ量ではなく模倣の天井やモデル容量が効いている段階です。
+データを 15 万半荘に増やしても一致率はほぼ変わらず（+0.1pt）、データ量よりも、模倣そのものの天井かモデルの容量が制約になっていると考えています（未検証）。
+
+## 強さ
+
+同梱の重みと、ルールベースの打ち手（`rule`、後述）を同じ卓で 2 人ずつ打たせた結果です（300 ペア = 600 半荘、同卓複式）。
+
+| 打ち手 | 平均順位 | 和了率 | 放銃率 | リーチ率 |
+|---|---|---|---|---|
+| このモデル | 1.681 | 34.8% | 8.2% | 23.1% |
+| ルールベース | 3.319 | 7.9% | 22.6% | 13.0% |
+
+平均順位差は −1.638 ± 0.028（SE）です。
+
+ルールベースは「切った後の向聴数が最小になる牌を切る」だけの弱い打ち手で、この結果はシミュレータとモデルが正しく動いていることの確認にとどまります。
+天鳳での段位や、Mortal など既存の AI との比較はまだ測っていません。
 
 ## 必要なもの
 
@@ -75,7 +91,7 @@ python3 serve/server.py
 
 ## 自分で学習する
 
-天鳳の牌譜は再配布できないため、このリポジトリには含めていません。各自で入手してください。
+天鳳の牌譜は利用規約により再配布できないため、牌譜そのものも、そこから作ったデータセットもこのリポジトリには含めていません。各自で入手してください。
 
 学習スクリプトが読むのは、`YYYY/*.mjson` を並べた zip です（各ファイルは gzip 圧縮した mjai 形式の JSON Lines）。
 Hugging Face で配布されている `tenhou-houou-YYYY.tar`（中身は `*.mjai.json.zst`）形式なら、次で変換できます。
@@ -84,7 +100,7 @@ Hugging Face で配布されている `tenhou-houou-YYYY.tar`（中身は `*.mja
 python3 debug/convert_hf_tar.py data/hf/tenhou-houou-2024.tar data/2024.zip
 ```
 
-学習（同梱の重みは 5 万半荘 × 3 エポック、A6000 で約 1 日強）:
+学習（同梱の重みは 5 万半荘 × 3 エポック、A6000 で約 2 日）:
 
 ```bash
 python3 train/train_bc1.py --data data/2024.zip --max-games 50000 --epochs 3 --shuffle-buffer 30000 --save-every 2000 --save-dir train/checkpoints1
@@ -134,6 +150,17 @@ python3 debug/test_rules_heuristic.py
 - **GRPO（7 回）**: いずれも模倣学習のモデルに有意に勝てませんでした。同じ局面から局の終わりまで打ち切っても、枝どうしの順位の相関が 0.24 しかなく、報酬が「どちらの手が良かったか」を測れていないことが原因でした。
 - **AWR（優位度で重み付けした模倣学習）**: 一致率は少し上がりましたが、対戦では元のモデルと互角でした。鳳凰卓の打ち手はすでに強く、重み付けの信号が弱いためです。
 - **当たり牌を予測する補助ヘッド**: AUC 0.94 で、手計算の危険度（0.91）を上回りました。
+
+## 既知の問題
+
+- 牌譜ビューアの画面に人間対局のボタンが残っていますが、対応するサーバー側の機能（`human_game.py`）が含まれていないため、押すとエラー（501）になります。
+- 同卓複式でも、鳴きで打順がずれると以降のツモが分岐するため、配牌の運を相殺する効果は小さめです（上の評価では SE がほぼ変わりませんでした）。
+
+## 参考
+
+- J. Li et al., "Suphx: Mastering Mahjong with Deep Reinforcement Learning", arXiv:2003.13590, 2020.
+- [mjai](https://github.com/gimite/mjai) — 麻雀AIどうしの対局プロトコル。牌譜の形式に使っています。
+- [Mortal](https://github.com/Equim-chan/Mortal) — OSS の麻雀AI。設計の比較対象として参照しました。
 
 ## ライセンス
 
