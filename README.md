@@ -1,9 +1,9 @@
 # tenhou-to-mjai — Transformer 麻雀AI（天鳳鳳凰卓の牌譜で模倣学習）
 
-**English summary.** A four-player Japanese (riichi) mahjong AI that imitates Tenhou Houou-table players with a single Transformer deciding discards, riichi, calls and kans. It reaches the supervised-learning accuracy reported for Suphx (discard 77.0% vs 76.7%). The repository includes a game simulator following Tenhou rules (exceptions are listed below), a paired (duplicate) evaluation script, a browser replay viewer, and trained weights, so you can run games and evaluations right after cloning. Tenhou game logs are not included.
+**English summary.** A four-player Japanese (riichi) mahjong AI that imitates Tenhou Houou-table players with a single Transformer deciding discards, riichi, calls and kans. It reaches the supervised-learning accuracy reported for Suphx (discard 77.0% vs 76.7%). The repository includes a game simulator following Tenhou rules (exceptions are listed below), a paired (duplicate) evaluation script, a browser UI for playing against the AI and viewing replays, and trained weights, so you can run games and evaluations right after cloning. Tenhou game logs are not included.
 
 天鳳鳳凰卓の牌譜から、打牌・リーチ・鳴き・槓の判断を **1つの Transformer** で模倣学習した四人麻雀AIです。
-自前の対局シミュレータ、同卓複式の評価スクリプト、ブラウザで見られる牌譜ビューアを含みます。
+自前の対局シミュレータ、同卓複式の評価スクリプト、ブラウザで AI と対戦したり牌譜を見たりできる画面を含みます。
 学習済みの重み（`weights/model_bc_best.pt`）を同梱しているので、clone してすぐに対局と評価を回せます。
 
 - モデル: MahjongTransformer（約 2,000 万パラメータ、d_model 384、エンコーダ 6 層 / デコーダ 2 層）
@@ -78,16 +78,18 @@ python3 eval/eval_paired.py --model-a weights/model_bc_best.pt --model-b rule --
 
 `rule` は「切った後の向聴数が最小になる牌を切る」だけの簡易な打ち手で、動作確認と最低限の基準線用です。
 
-### 3. 牌譜ビューアで見る
+### 3. ブラウザで AI と対戦する・牌譜を見る
 
 ```bash
 python3 serve/server.py
 ```
 
-ブラウザで http://127.0.0.1:8000 を開くと、AI 同士の対局を生成して 1 手ずつ再生できます。
-各手番でモデルが候補ごとにどれだけの確率を付けたかも表示されます。生成した牌譜は `replays/` に保存されます。
+ブラウザで http://127.0.0.1:8000 を開きます。
 
-人間が AI と対戦する機能（`/human/*`）は、現在このリポジトリには含まれていません。
+- **AI と対戦**: 「🎮 人間で対戦（AI3人と）」を押すと、AI 3 人と東南戦を打てます。打牌・リーチ・鳴き・槓に加えて、和了するか見逃すかも選べます。
+- **牌譜を見る**: AI 同士の対局を生成して 1 手ずつ再生できます。各手番でモデルが候補ごとにどれだけの確率を付けたかも表示されます。生成した牌譜は `replays/` に保存されます。
+
+AI の手番ではモデルの推論が走るので、対戦は GPU があると快適です（CPU でも動きますが、AI の手番で数秒待つことがあります）。
 
 ## 自分で学習する
 
@@ -119,7 +121,7 @@ python3 train/train_bc1.py --data data/2024.zip --max-games 50000 --epochs 3 --s
 | `train/` | 模倣学習（`train_bc1.py`） |
 | `rl/` | 対局シミュレータ（`self_play.py`）、役・点数計算（`yaku.py`）、強化学習の実験コード |
 | `eval/` | 同卓複式の評価（`eval_paired.py`）、ルールベースの打ち手、押し引きの集計など |
-| `serve/` | 牌譜ビューア（FastAPI + `ui.html`） |
+| `serve/` | ブラウザの画面（FastAPI + `ui.html`）、人間対 AI の対局セッション（`human_game.py`） |
 | `debug/` | テストと診断用スクリプト |
 | `weights/` | 学習済みの重み |
 
@@ -153,7 +155,7 @@ python3 debug/test_rules_heuristic.py
 
 ## 既知の問題
 
-- 牌譜ビューアの画面に人間対局のボタンが残っていますが、対応するサーバー側の機能（`human_game.py`）が含まれていないため、押すとエラー（501）になります。
+- 対戦中の画面更新では、そこまでの全手についてモデルの推論をやり直しています。局が進むほど AI の手番の待ち時間が少しずつ長くなります（人間の入力待ちの間は結果を使い回すので重くなりません）。
 - 同卓複式でも、鳴きで打順がずれると以降のツモが分岐するため、配牌の運を相殺する効果は小さめです（上の評価では SE がほぼ変わりませんでした）。
 
 ## 参考

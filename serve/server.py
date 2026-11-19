@@ -462,7 +462,15 @@ def human_state(session_id: str):
     if s is None:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
     snap = s.snapshot()
-    out = _events_to_kyokus(snap["events"])
+    # 人間の入力待ちの間は同じイベント列で何度も呼ばれるので、変換結果を使い回す
+    # （変換では全手のモデル推論をやり直すので、CPU だと 1 回数秒かかる）。
+    n_ev = len(snap["events"])
+    cache = getattr(s, "_view_cache", None)
+    if cache is not None and cache[0] == n_ev:
+        out = dict(cache[1])
+    else:
+        out = _events_to_kyokus(snap["events"])
+        s._view_cache = (n_ev, dict(out))
     out["session_id"]     = snap["id"]
     out["human_player"]   = snap["human_player"]
     out["player_names"]   = snap["names"]

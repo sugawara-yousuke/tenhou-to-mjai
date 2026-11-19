@@ -294,8 +294,11 @@ class MahjongSimulator:
         return True
 
     # ---- 半荘 ----
-    def _play_game(self, fixed_decks=None):
-        events = [{"type": "start_game", "names": self.names, "kyoku_first": 0, "aka_flag": True}]
+    def _play_game(self, fixed_decks=None, events=None):
+        """events に list を渡すと、そこへイベントを積む（対人対局で途中経過を見せるため）。"""
+        if events is None:
+            events = []
+        events.append({"type": "start_game", "names": self.names, "kyoku_first": 0, "aka_flag": True})
         scores = [25000] * 4; oya = 0; bk = 0; kyoku = 1; honba = 0; kyotaku = 0
         self._kyoku_counter = 0
         per_kyoku = []
